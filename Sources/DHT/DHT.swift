@@ -43,7 +43,7 @@ public class DHT {
     /// - Parameter device: The type of DHT device to read.
     /// - Parameter timeOutLoopLimit: The number of times to loop before giving up. Faster machines may need larger numbers, but for the RPi 4 this is over twice the typical value.
     ///
-    init(pin: GPIO, device: Device, timeOutLoopLimit: Int = 200) {
+    public init(pin: GPIO, device: Device, timeOutLoopLimit: Int = 200) {
         self.pin = pin
         self.device = device
         self.timeOutLoopLimit = timeOutLoopLimit
