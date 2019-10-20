@@ -48,9 +48,9 @@ public class DHT {
     ///
     /// - Parameter pin: The GPIO pin the device is attached to.
     /// - Parameter device: The type of DHT device to read.
-    /// - Parameter timeoutLoopLimit: The number of times to loop before giving up. Faster machines may need larger numbers, but for the RPi 4 this is over twice the typical value.
+    /// - Parameter timeoutLoopLimit: The number of times to loop before giving up. Faster machines may need larger numbers, but the default is over 200% above typical on RPi 4 or 150% on RPi 2.
     ///
-    public init(pin: GPIO, device: Device, timeoutLoopLimit: Int = 200) {
+    public init(pin: GPIO, device: Device, timeoutLoopLimit: Int = 400) {
         self.pin = pin
         self.device = device
         self.timeoutLoopLimit = timeoutLoopLimit
@@ -159,7 +159,7 @@ public class DHT {
         self.sampleCallback = sample
         self.isRunning = true
 
-        self.activityQueue = DispatchQueue(label: queueLabel, qos: .userInteractive)
+        self.activityQueue = DispatchQueue(label: queueLabel, qos: .userInteractive)  // for timing loops a high priority works best
         self.activityQueue?.async { [weak self] in
             self?.performRead()
         }
