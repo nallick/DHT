@@ -84,7 +84,7 @@ public class DHT {
         var waitForStartCount = 0
         while self.pin.value != 0 {
             waitForStartCount += 1
-            guard waitForStartCount < timeoutLoopLimit else { return .failure(.timeout) }
+            guard waitForStartCount < timeoutLoopLimit else { print("timout 1: \(waitForStartCount)"); return .failure(.timeout) }
         }
         var maxCount = waitForStartCount
 
@@ -94,14 +94,14 @@ public class DHT {
             // count how long pin is low and store in lowPulseCounts[index]
             while self.pin.value == 0 {
                 lowPulseCount[index] += 1
-                guard lowPulseCount[index] < timeoutLoopLimit else { return .failure(.timeout) }
+                guard lowPulseCount[index] < timeoutLoopLimit else { print("timout 2: \(lowPulseCount[index]), index: \(index)"); return .failure(.timeout) }
                 maxCount = max(maxCount, lowPulseCount[index])
             }
 
             // count how long pin is high and store in highPulseCounts[index]
             while self.pin.value != 0 {
                 highPulseCount[index] += 1
-                guard highPulseCount[index] < timeoutLoopLimit else { return .failure(.timeout) }
+                guard highPulseCount[index] < timeoutLoopLimit else { print("timout 3: \(highPulseCount[index]), index: \(index)"); return .failure(.timeout) }
                 maxCount = max(maxCount, lowPulseCount[index])
             }
         }
