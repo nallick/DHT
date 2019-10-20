@@ -48,9 +48,9 @@ public class DHT {
     ///
     /// - Parameter pin: The GPIO pin the device is attached to.
     /// - Parameter device: The type of DHT device to read.
-    /// - Parameter timeoutLoopLimit: The number of times to loop before giving up. Faster machines may need larger numbers, but for the RPi 2 this is over twice the typical value.
+    /// - Parameter timeoutLoopLimit: The number of times to loop before giving up. Faster machines may need larger numbers, but for the RPi 4 this is over twice the typical value.
     ///
-    public init(pin: GPIO, device: Device, timeoutLoopLimit: Int = 300) {
+    public init(pin: GPIO, device: Device, timeoutLoopLimit: Int = 200) {
         self.pin = pin
         self.device = device
         self.timeoutLoopLimit = timeoutLoopLimit
@@ -101,8 +101,12 @@ public class DHT {
             // count how long pin is high and store in highPulseCounts[index]
             while self.pin.value != 0 {
                 highPulseCount[index] += 1
-                guard highPulseCount[index] < timeoutLoopLimit else { print("timout 3: \(highPulseCount[index]), index: \(index)"); return .failure(.timeout) }
-                maxCount = max(maxCount, lowPulseCount[index])
+                guard highPulseCount[index] < timeoutLoopLimit else {
+                    print("timout 3: \(highPulseCount[index]), index: \(index)")
+                    if index == pulseCount - 1 { break }
+                    return .failure(.timeout)
+                }
+                maxCount = max(maxCount, highPulseCount[index])
             }
         }
         print("maxCount: \(maxCount)")
