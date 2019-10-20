@@ -228,8 +228,7 @@ public class DHT {
     private static func setMaximumThreadPriority() {
         var scheduler = sched_param()
         scheduler.sched_priority = sched_get_priority_max(SCHED_FIFO)
-        let result = sched_setscheduler(0, SCHED_FIFO, &scheduler)
-        print("max scheduler result: \(result), error: \(errno)")
+        _ = sched_setscheduler(0, SCHED_FIFO, &scheduler)   // this tends to set errno to EPERM (insufficent privileges) but seems to help regardless
     }
 
     /// Set the priority of the current thread to the default.
@@ -237,8 +236,7 @@ public class DHT {
     private static func setDefaultThreadPriority() {
         var scheduler = sched_param()
         scheduler.sched_priority = 0
-        let result = sched_setscheduler(0, SCHED_OTHER, &scheduler)
-        print("reset scheduler result: \(result)")
+        _ = sched_setscheduler(0, SCHED_OTHER, &scheduler)
     }
 }
 
