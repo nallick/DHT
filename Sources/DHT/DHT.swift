@@ -229,7 +229,7 @@ public class DHT {
         var scheduler = sched_param()
         scheduler.sched_priority = sched_get_priority_max(SCHED_FIFO)
         let result = sched_setscheduler(0, SCHED_FIFO, &scheduler)
-        print("max scheduler result: \(result)")
+        print("max scheduler result: \(result), error: \(errno)")
     }
 
     /// Set the priority of the current thread to the default.
