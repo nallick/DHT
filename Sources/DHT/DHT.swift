@@ -15,10 +15,16 @@ public class DHT {
 
     public typealias HumdityCallback = (Int) -> Void
     public typealias TemperatureCallback = (Double) -> Void
+    public typealias SampleCallback = (SampleResult) -> Void
     public typealias Sample = (humidity: Int, temperature: Int)   // tenths of percent relative humidity, tenths of degrees celsius
+    public typealias SampleResult = Result<Sample, Status>
 
     public enum Device {
         case dht11, dht22
+    }
+
+    public enum Status: Error {
+        case timeout, checksum
     }
 
     public let pin: GPIO
@@ -28,7 +34,7 @@ public class DHT {
     public private(set) var humidity = Int.min          // percent relative humidity (since we have at best 2% or 5% accuracy there's no reason for more precision)
     public private(set) var temperature = Double.nan    // degrees celsius (accurate to 2.0°C or 0.5°C)
 
-    private let timeOutLoopLimit: Int
+    private let timeoutLoopLimit: Int
     private var samples: [(Date, Sample)] = []
     private var activityQueue: DispatchQueue?
     private var updateTimer: Timer?
@@ -36,24 +42,25 @@ public class DHT {
     private var updateInterval: TimeInterval = 0.0
     private var humidityCallback: HumdityCallback?
     private var temperatureCallback: TemperatureCallback?
+    private var sampleCallback: SampleCallback?
 
     /// Initialize a DHT reader.
     ///
     /// - Parameter pin: The GPIO pin the device is attached to.
     /// - Parameter device: The type of DHT device to read.
-    /// - Parameter timeOutLoopLimit: The number of times to loop before giving up. Faster machines may need larger numbers, but for the RPi 4 this is over twice the typical value.
+    /// - Parameter timeoutLoopLimit: The number of times to loop before giving up. Faster machines may need larger numbers, but for the RPi 4 this is over twice the typical value.
     ///
-    public init(pin: GPIO, device: Device, timeOutLoopLimit: Int = 200) {
+    public init(pin: GPIO, device: Device, timeoutLoopLimit: Int = 200) {
         self.pin = pin
         self.device = device
-        self.timeOutLoopLimit = timeOutLoopLimit
+        self.timeoutLoopLimit = timeoutLoopLimit
     }
 
     /// Read from the device.
     ///
     /// - Returns: The sample read from the device (in tenths of units), or nil on timeout or invalid checksum.
     ///
-    public func read() -> Sample? {
+    public func read() -> SampleResult {
         let pulseCount = 41
         var lowPulseCount = [Int](repeating: 0, count: pulseCount)
         var highPulseCount = [Int](repeating: 0, count: pulseCount)
@@ -77,7 +84,7 @@ public class DHT {
         var waitForStartCount = 0
         while self.pin.value != 0 {
             waitForStartCount += 1
-            guard waitForStartCount < timeOutLoopLimit else { return nil }
+            guard waitForStartCount < timeoutLoopLimit else { return .failure(.timeout) }
         }
 
         // record pulse widths for the expected result bits
@@ -86,13 +93,13 @@ public class DHT {
             // count how long pin is low and store in lowPulseCounts[index]
             while self.pin.value == 0 {
                 lowPulseCount[index] += 1
-                guard lowPulseCount[index] < timeOutLoopLimit else { return nil }
+                guard lowPulseCount[index] < timeoutLoopLimit else { return .failure(.timeout) }
             }
 
             // count how long pin is high and store in highPulseCounts[index]
             while self.pin.value != 0 {
                 highPulseCount[index] += 1
-                guard highPulseCount[index] < timeOutLoopLimit else { return nil }
+                guard highPulseCount[index] < timeoutLoopLimit else { return .failure(.timeout) }
             }
         }
 
@@ -116,15 +123,15 @@ public class DHT {
             }
         }
 
-        guard (data[4] & 0xFF) == ((data[0] + data[1] + data[2] + data[3]) & 0xFF) else { return nil }  // bad checksum
+        guard (data[4] & 0xFF) == ((data[0] + data[1] + data[2] + data[3]) & 0xFF) else { return .failure(.checksum) }
 
-        if self.device == .dht11 { return (data[0]*10 + data[1], data[2]*10 + data[3]) }
+        if self.device == .dht11 { return .success((data[0]*10 + data[1], data[2]*10 + data[3])) }
 
         let humidity = (data[0] << 8) | data[1]
         var temperature = ((data[2] & 0x7F) << 8) | data[3]
         if (data[2] & 0x80) != 0 { temperature = -temperature }
 
-        return (humidity, temperature)
+        return .success((humidity, temperature))
     }
 
     /// Start reading the device periodically.
@@ -134,12 +141,14 @@ public class DHT {
     /// - Parameter queueLabel: The DispatchQueue label.
     /// - Parameter humidity: The humidity change callback (this will be on the receiver's background activity thread).
     /// - Parameter temperature: The temperature change callback (this will be on the receiver's background activity thread).
+    /// - Parameter sample: The sample callback for each read (this will be on the receiver's background activity thread).
     ///
-    public func start(readInterval: TimeInterval, updateInterval: TimeInterval, queueLabel: String = "com.PurgatoryDesign.DHT", humidity: @escaping HumdityCallback, temperature: @escaping TemperatureCallback) {
+    public func start(readInterval: TimeInterval, updateInterval: TimeInterval, queueLabel: String = "com.PurgatoryDesign.DHT", humidity: HumdityCallback? = nil, temperature: TemperatureCallback? = nil, sample: SampleCallback? = nil) {
         self.readInterval = readInterval
         self.updateInterval = updateInterval
         self.humidityCallback = humidity
         self.temperatureCallback = temperature
+        self.sampleCallback = sample
         self.isRunning = true
 
         self.activityQueue = DispatchQueue(label: queueLabel, qos: .userInitiated)
@@ -173,13 +182,16 @@ public class DHT {
     ///
     private func performRead() {
         if self.isRunning {
-            if let sample = self.read() {
+            let result = self.read()
+            if case .success(let sample) = result {
                 self.samples.append((Date(), sample))
             }
 
             self.activityQueue?.asyncAfter(deadline: .now() + self.readInterval) { [weak self] in
                 self?.performRead()
             }
+
+            self.sampleCallback?(result)
         }
     }
 
