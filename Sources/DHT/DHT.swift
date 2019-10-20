@@ -13,50 +13,6 @@ import SwiftyGPIO
 
 public class DHT {
 
-    private static func setMaximumPriority() {
-        var scheduler = sched_param()
-        scheduler.sched_priority = sched_get_priority_max(SCHED_FIFO)
-        let result = sched_setscheduler(0, SCHED_FIFO, &scheduler)
-        print("max scheduler result: \(result)")
-    }
-
-    private static func setDefaultPriority() {
-        var scheduler = sched_param()
-        scheduler.sched_priority = 0
-        let result = sched_setscheduler(0, SCHED_OTHER, &scheduler)
-        print("reset scheduler result: \(result)")
-    }
-
-    /*
-    void set_max_priority(void) {
-        struct sched_param sched;
-        memset(&sched, 0, sizeof(sched));
-        // Use FIFO scheduler with highest priority for the lowest chance of the kernel context switching.
-        sched.sched_priority = sched_get_priority_max(SCHED_FIFO);
-        sched_setscheduler(0, SCHED_FIFO, &sched);
-    }
-
-    void set_default_priority(void) {
-        struct sched_param sched;
-        memset(&sched, 0, sizeof(sched));
-        // Go back to default scheduler with default 0 priority.
-        sched.sched_priority = 0;
-        sched_setscheduler(0, SCHED_OTHER, &sched);
-    }
-
-    pthread_create(&thread1, NULL, thread1name, NULL); // medium priority task
-    param.sched_priority = 25;
-    pthread_setschedparam(thread1, SCHED_RR, &param);
-
-    pthread_create(&thread2, NULL, thread2name, NULL); // higher priority task
-    param.sched_priority = 50;
-    pthread_setschedparam(thread2, SCHED_RR, &param);
-
-    pthread_create(&thread3, NULL, thread3name, NULL); // highest priority task
-    param.sched_priority = 90;
-    pthread_setschedparam(thread3, SCHED_RR, &param);
-*/
-
     public typealias HumdityCallback = (Int) -> Void
     public typealias TemperatureCallback = (Double) -> Void
     public typealias SampleCallback = (SampleResult) -> Void
@@ -110,7 +66,7 @@ public class DHT {
         var highPulseCount = [Int](repeating: 0, count: pulseCount)
 
         //********* start time sensitive section *********//
-        DHT.setMaximumPriority()
+        DHT.setMaximumThreadPriority()
 
         // set pin high for ~500 milliseconds
         self.pin.direction = .OUT
@@ -152,7 +108,7 @@ public class DHT {
         }
 
         //********* end time sensitive section *********//
-        DHT.setDefaultPriority()
+        DHT.setDefaultThreadPriority()
 
         // ignore the first reading because it's a constant 80 microsecond pulse
         let lowPulseWidth = lowPulseCount.dropFirst()
@@ -200,7 +156,7 @@ public class DHT {
         self.sampleCallback = sample
         self.isRunning = true
 
-        self.activityQueue = DispatchQueue(label: queueLabel, qos: .userInteractive)  // a high thread priority works best for timing loops
+        self.activityQueue = DispatchQueue(label: queueLabel)
         self.activityQueue?.async { [weak self] in
             self?.performRead()
         }
@@ -265,6 +221,24 @@ public class DHT {
             self.temperature = averageTemperature
             self.temperatureCallback?(averageTemperature)
         }
+    }
+
+    /// Set the priority of the current thread to maximum with FIFO scheduling to get as close to real time computing behavior as possible.
+    ///
+    private static func setMaximumThreadPriority() {
+        var scheduler = sched_param()
+        scheduler.sched_priority = sched_get_priority_max(SCHED_FIFO)
+        let result = sched_setscheduler(0, SCHED_FIFO, &scheduler)
+        print("max scheduler result: \(result)")
+    }
+
+    /// Set the priority of the current thread to the default.
+    ///
+    private static func setDefaultThreadPriority() {
+        var scheduler = sched_param()
+        scheduler.sched_priority = 0
+        let result = sched_setscheduler(0, SCHED_OTHER, &scheduler)
+        print("reset scheduler result: \(result)")
     }
 }
 
