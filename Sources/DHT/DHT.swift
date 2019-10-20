@@ -17,13 +17,13 @@ public class DHT {
     public typealias TemperatureCallback = (Double) -> Void
     public typealias SampleCallback = (SampleResult) -> Void
     public typealias Sample = (humidity: Int, temperature: Int)   // tenths of percent relative humidity, tenths of degrees celsius
-    public typealias SampleResult = Result<Sample, Status>
+    public typealias SampleResult = Result<Sample, SampleError>
 
     public enum Device {
         case dht11, dht22
     }
 
-    public enum Status: Error {
+    public enum SampleError: Error {
         case timeout, checksum
     }
 
@@ -58,9 +58,9 @@ public class DHT {
 
     /// Read from the device.
     ///
-    /// - Returns: The sample read from the device (in tenths of units), or nil on timeout or invalid checksum.
+    /// - Returns: The sample read from the device (in tenths of units), or a timeout or invalid checksum failure.
     ///
-    public func read() -> SampleResult {
+    public func sample() -> SampleResult {
         let pulseCount = 41
         var lowPulseCount = [Int](repeating: 0, count: pulseCount)
         var highPulseCount = [Int](repeating: 0, count: pulseCount)
@@ -86,6 +86,7 @@ public class DHT {
             waitForStartCount += 1
             guard waitForStartCount < timeoutLoopLimit else { return .failure(.timeout) }
         }
+        var maxCount = waitForStartCount
 
         // record pulse widths for the expected result bits
         for index in 0 ..< pulseCount {
@@ -94,14 +95,17 @@ public class DHT {
             while self.pin.value == 0 {
                 lowPulseCount[index] += 1
                 guard lowPulseCount[index] < timeoutLoopLimit else { return .failure(.timeout) }
+                maxCount = max(maxCount, lowPulseCount[index])
             }
 
             // count how long pin is high and store in highPulseCounts[index]
             while self.pin.value != 0 {
                 highPulseCount[index] += 1
                 guard highPulseCount[index] < timeoutLoopLimit else { return .failure(.timeout) }
+                maxCount = max(maxCount, lowPulseCount[index])
             }
         }
+        print("maxCount: \(maxCount)")
 
         //********* end time sensitive section *********//
 
@@ -134,7 +138,7 @@ public class DHT {
         return .success((humidity, temperature))
     }
 
-    /// Start reading the device periodically.
+    /// Start sampling the device periodically.
     ///
     /// - Parameter readInterval: The time between reads (this should be at least 1.0 for a DHT11 and 2.0 for a DHT22).
     /// - Parameter updateInterval: The minimum time between updates (if nothing changes updates will be less frequent).
@@ -163,7 +167,7 @@ public class DHT {
         }
     }
 
-    /// Stop the periodic reading of the device.
+    /// Stop the periodic sampling of the device.
     ///
     public func stop() {
         self.activityQueue?.async { [weak self] in
@@ -182,7 +186,7 @@ public class DHT {
     ///
     private func performRead() {
         if self.isRunning {
-            let result = self.read()
+            let result = self.sample()
             if case .success(let sample) = result {
                 self.samples.append((Date(), sample))
             }
