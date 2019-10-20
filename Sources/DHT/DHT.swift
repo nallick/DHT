@@ -159,7 +159,7 @@ public class DHT {
         self.sampleCallback = sample
         self.isRunning = true
 
-        self.activityQueue = DispatchQueue(label: queueLabel, qos: .userInitiated)
+        self.activityQueue = DispatchQueue(label: queueLabel, qos: .userInteractive)
         self.activityQueue?.async { [weak self] in
             self?.performRead()
         }
