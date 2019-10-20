@@ -48,9 +48,9 @@ public class DHT {
     ///
     /// - Parameter pin: The GPIO pin the device is attached to.
     /// - Parameter device: The type of DHT device to read.
-    /// - Parameter timeoutLoopLimit: The number of times to loop before giving up. Faster machines may need larger numbers, but the default is over 200% above typical on RPi 4 or 150% on RPi 2.
+    /// - Parameter timeoutLoopLimit: The number of times to loop before giving up. Faster machines may need larger numbers, but the default is over 130% of typical on RPi 4 or 200% on RPi 2.
     ///
-    public init(pin: GPIO, device: Device, timeoutLoopLimit: Int = 400) {
+    public init(pin: GPIO, device: Device, timeoutLoopLimit: Int = 300) {
         self.pin = pin
         self.device = device
         self.timeoutLoopLimit = timeoutLoopLimit
@@ -84,7 +84,7 @@ public class DHT {
         var waitForStartCount = 0
         while self.pin.value != 0 {
             waitForStartCount += 1
-            guard waitForStartCount < timeoutLoopLimit else { print("timout 1: \(waitForStartCount)"); return .failure(.timeout) }
+            guard waitForStartCount < timeoutLoopLimit else { return .failure(.timeout) }
         }
         var maxCount = waitForStartCount
 
@@ -94,7 +94,7 @@ public class DHT {
             // count how long pin is low and store in lowPulseCounts[index]
             while self.pin.value == 0 {
                 lowPulseCount[index] += 1
-                guard lowPulseCount[index] < timeoutLoopLimit else { print("timout 2: \(lowPulseCount[index]), index: \(index)"); return .failure(.timeout) }
+                guard lowPulseCount[index] < timeoutLoopLimit else { return .failure(.timeout) }
                 maxCount = max(maxCount, lowPulseCount[index])
             }
 
@@ -102,14 +102,12 @@ public class DHT {
             while self.pin.value != 0 {
                 highPulseCount[index] += 1
                 guard highPulseCount[index] < timeoutLoopLimit else {
-                    print("timout 3: \(highPulseCount[index]), index: \(index)")
-                    if index == pulseCount - 1 { break }
+                    if index == pulseCount - 1 { break }  // don't timeout on the last pulse (although the checksum may fail)
                     return .failure(.timeout)
                 }
                 maxCount = max(maxCount, highPulseCount[index])
             }
         }
-        print("maxCount: \(maxCount)")
 
         //********* end time sensitive section *********//
 
@@ -159,7 +157,7 @@ public class DHT {
         self.sampleCallback = sample
         self.isRunning = true
 
-        self.activityQueue = DispatchQueue(label: queueLabel, qos: .userInteractive)  // for timing loops a high priority works best
+        self.activityQueue = DispatchQueue(label: queueLabel, qos: .userInteractive)  // a high thread priority works best for timing loops
         self.activityQueue?.async { [weak self] in
             self?.performRead()
         }
