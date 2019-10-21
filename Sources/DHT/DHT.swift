@@ -65,50 +65,48 @@ public class DHT {
         var lowPulseCount = [Int](repeating: 0, count: pulseCount)
         var highPulseCount = [Int](repeating: 0, count: pulseCount)
 
-        //********* start time sensitive section *********//
-        DHT.setMaximumThreadPriority()
+        do {
+            //********* start time sensitive section *********//
+            DHT.setMaximumThreadPriority()
+            defer { DHT.setDefaultThreadPriority() }
 
-        // set pin high for ~500 milliseconds
-        self.pin.direction = .OUT
-        self.pin.value = 1
-        usleep(500_000)
+            // set pin high for ~500 milliseconds
+            self.pin.direction = .OUT
+            self.pin.value = 1
+            usleep(500_000)
 
-        // set pin low for ~20 milliseconds
-        self.pin.value = 0
-        usleep(20_000)
+            // set pin low for ~20 milliseconds
+            self.pin.value = 0
+            usleep(20_000)
 
-        // prepare to read the pin
-        self.pin.direction = .IN
-        usleep(1)
+            // prepare to read the pin
+            self.pin.direction = .IN
+            usleep(1)
 
-        // wait for DHT to pull pin low
-        var waitForStartCount = 0
-        while self.pin.value != 0 {
-            waitForStartCount += 1
-            guard waitForStartCount < timeoutLoopLimit else { return .failure(.timeout) }
-        }
-        var maxCount = waitForStartCount
-
-        // record pulse widths for the expected result bits
-        for index in 0 ..< pulseCount {
-
-            // count how long pin is low and store in lowPulseCounts[index]
-            while self.pin.value == 0 {
-                lowPulseCount[index] += 1
-                guard lowPulseCount[index] < timeoutLoopLimit else { return .failure(.timeout) }
-                maxCount = max(maxCount, lowPulseCount[index])
-            }
-
-            // count how long pin is high and store in highPulseCounts[index]
+            // wait for DHT to pull pin low
+            var waitForStartCount = 0
             while self.pin.value != 0 {
-                highPulseCount[index] += 1
-                guard highPulseCount[index] < timeoutLoopLimit else { return .failure(.timeout) }
-                maxCount = max(maxCount, highPulseCount[index])
+                waitForStartCount += 1
+                guard waitForStartCount < timeoutLoopLimit else { return .failure(.timeout) }
             }
-        }
 
-        //********* end time sensitive section *********//
-        DHT.setDefaultThreadPriority()
+            // record pulse widths for the expected result bits
+            for index in 0 ..< pulseCount {
+
+                // count how long pin is low and store in lowPulseCounts[index]
+                while self.pin.value == 0 {
+                    lowPulseCount[index] += 1
+                    guard lowPulseCount[index] < timeoutLoopLimit else { return .failure(.timeout) }
+                }
+
+                // count how long pin is high and store in highPulseCounts[index]
+                while self.pin.value != 0 {
+                    highPulseCount[index] += 1
+                    guard highPulseCount[index] < timeoutLoopLimit else { return .failure(.timeout) }
+                }
+            }
+            //********* end time sensitive section *********//
+        }
 
         // ignore the first reading because it's a constant 80 microsecond pulse
         let lowPulseWidth = lowPulseCount.dropFirst()
