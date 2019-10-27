@@ -13,9 +13,6 @@ import SwiftyGPIO
 
 public class DHT {
 
-    public typealias HumdityCallback = (Int) -> Void
-    public typealias TemperatureCallback = (Double) -> Void
-    public typealias SampleCallback = (SampleResult) -> Void
     public typealias Sample = (humidity: Int, temperature: Int)   // tenths of percent relative humidity, tenths of degrees celsius
     public typealias SampleResult = Result<Sample, SampleError>
 
@@ -30,19 +27,11 @@ public class DHT {
     public let pin: GPIO
     public let device: Device
 
-    public private(set) var isRunning = false
     public private(set) var humidity = Int.min          // percent relative humidity (since we have at best 2% or 5% accuracy there's no reason for more precision)
     public private(set) var temperature = Double.nan    // degrees celsius (accurate to 2.0°C or 0.5°C)
 
     private let timeoutLoopLimit: Int
     private var samples: [(Date, Sample)] = []
-    private var activityQueue: DispatchQueue?
-    private var updateTimer: Timer?
-    private var readInterval: TimeInterval = 0.0
-    private var updateInterval: TimeInterval = 0.0
-    private var humidityCallback: HumdityCallback?
-    private var temperatureCallback: TemperatureCallback?
-    private var sampleCallback: SampleCallback?
 
     /// Initialize a DHT reader.
     ///
@@ -137,8 +126,44 @@ public class DHT {
         return .success((humidity, temperature))
     }
 
-    /// Start sampling the device periodically.
+    /// Set the priority of the current thread to maximum with FIFO scheduling to get as close to real time computing behavior as possible.
     ///
+    private static func setMaximumThreadPriority() {
+        #if os(Linux)
+        var scheduler = sched_param()
+        scheduler.sched_priority = sched_get_priority_max(SCHED_FIFO)
+        _ = sched_setscheduler(0, SCHED_FIFO, &scheduler)   // this tends to set errno to EPERM (insufficent privileges) but seems to help regardless
+        #endif
+    }
+
+    /// Set the priority of the current thread to the default.
+    ///
+    private static func setDefaultThreadPriority() {
+        #if os(Linux)
+        var scheduler = sched_param()
+        scheduler.sched_priority = 0
+        _ = sched_setscheduler(0, SCHED_OTHER, &scheduler)
+        #endif
+    }
+}
+
+extension DHT {
+
+    public typealias HumdityCallback = (DHT, Int) -> Void
+    public typealias TemperatureCallback = (DHT, Double) -> Void
+    public typealias SampleCallback = (DHT, SampleResult) -> Void
+
+    public private(set) static var isRunning = false
+
+    private static var devices: [DHT] = []
+    private static var activityQueue: DispatchQueue?
+    private static var updateTimer: Timer?
+    private static var readInterval: TimeInterval = 0.0
+    private static var updateInterval: TimeInterval = 0.0
+
+    /// Start sampling a list of devices periodically.
+    ///
+    /// - Parameter devices: The devices to sample.
     /// - Parameter readInterval: The time between reads (this should be at least 1.0 for a DHT11 and 2.0 for a DHT22).
     /// - Parameter updateInterval: The minimum time between updates (if nothing changes updates will be less frequent).
     /// - Parameter queueLabel: The DispatchQueue label.
@@ -146,63 +171,65 @@ public class DHT {
     /// - Parameter temperature: The temperature change callback (this will be on the receiver's background activity thread).
     /// - Parameter sample: The sample callback for each read (this will be on the receiver's background activity thread).
     ///
-    public func start(readInterval: TimeInterval, updateInterval: TimeInterval, queueLabel: String = "com.PurgatoryDesign.DHT", humidity: HumdityCallback? = nil, temperature: TemperatureCallback? = nil, sample: SampleCallback? = nil) {
+    public static func start(devices: [DHT], readInterval: TimeInterval, updateInterval: TimeInterval, queueLabel: String = "com.PurgatoryDesign.DHT", humidity: HumdityCallback? = nil, temperature: TemperatureCallback? = nil, sample: SampleCallback? = nil) {
+        self.devices = devices
         self.readInterval = readInterval
         self.updateInterval = updateInterval
-        self.humidityCallback = humidity
-        self.temperatureCallback = temperature
-        self.sampleCallback = sample
         self.isRunning = true
 
         self.activityQueue = DispatchQueue(label: queueLabel)
-        self.activityQueue?.async { [weak self] in
-            self?.performRead()
+        self.activityQueue?.async {
+            self.devices.forEach { $0.performRead(sample: sample) }
         }
 
-        self.updateTimer = Timer.scheduledTimer(withTimeInterval: updateInterval, repeats: true) { [weak self] _ in
-            self?.activityQueue?.async {
-                self?.performUpdate()
+        self.updateTimer = Timer.scheduledTimer(withTimeInterval: updateInterval, repeats: true) { _ in
+            DHT.activityQueue?.async {
+                DHT.devices.forEach { $0.performUpdate(humidity: humidity, temperature: temperature) }
             }
         }
     }
 
-    /// Stop the periodic sampling of the device.
+    /// Stop the periodic sampling of the devices.
     ///
-    public func stop() {
-        self.activityQueue?.async { [weak self] in
-            guard let self = self else { return }
+    public static func stop() {
+        self.activityQueue?.async {
             self.isRunning = false
             self.updateTimer?.invalidate()
             self.updateTimer = nil
-            self.humidityCallback = nil
-            self.temperatureCallback = nil
             self.activityQueue = nil
-            self.samples.removeAll()
+
+            self.devices.forEach { $0.samples.removeAll() }
+            self.devices.removeAll()
         }
     }
 
     /// Perform an individual device read.
     ///
-    private func performRead() {
-        if self.isRunning {
+    /// - Parameter sample: The sample callback for each read (this will be on the receiver's background activity thread).
+    ///
+    private func performRead(sample: SampleCallback?) {
+        if DHT.isRunning {
             let result = self.sample()
             if case .success(let sample) = result {
                 self.samples.append((Date(), sample))
             }
 
-            self.activityQueue?.asyncAfter(deadline: .now() + self.readInterval) { [weak self] in
-                self?.performRead()
+            DHT.activityQueue?.asyncAfter(deadline: .now() + DHT.readInterval) { [weak self] in
+                self?.performRead(sample: sample)
             }
 
-            self.sampleCallback?(result)
+            sample?(self, result)
         }
     }
 
     /// Perform a periodic update, making the device callbacks for changes.
     ///
-    private func performUpdate() {
+    /// - Parameter humidity: The humidity change callback (this will be on the receiver's background activity thread).
+    /// - Parameter temperature: The temperature change callback (this will be on the receiver's background activity thread).
+    ///
+    private func performUpdate(humidity: HumdityCallback?, temperature: TemperatureCallback?) {
         let now = Date()
-        self.samples = self.samples.filter { now.timeIntervalSince($0.0) <= self.updateInterval }
+        self.samples = self.samples.filter { now.timeIntervalSince($0.0) <= DHT.updateInterval }
         guard !self.samples.isEmpty else { return }
         let sampleCount = Double(self.samples.count)
 
@@ -210,31 +237,15 @@ public class DHT {
         let averageHumidity = Int(round(Double(humiditySum)/(sampleCount*10.0)))
         if averageHumidity != self.humidity {
             self.humidity = averageHumidity
-            self.humidityCallback?(averageHumidity)
+            humidity?(self, averageHumidity)
         }
 
         let temperatureSum = self.samples.reduce(0) { accumulator, value in accumulator + value.1.temperature }
         let averageTemperature = round(Double(temperatureSum)/sampleCount)/10.0
         if averageTemperature != self.temperature {
             self.temperature = averageTemperature
-            self.temperatureCallback?(averageTemperature)
+            temperature?(self, averageTemperature)
         }
-    }
-
-    /// Set the priority of the current thread to maximum with FIFO scheduling to get as close to real time computing behavior as possible.
-    ///
-    private static func setMaximumThreadPriority() {
-        var scheduler = sched_param()
-        scheduler.sched_priority = sched_get_priority_max(SCHED_FIFO)
-        _ = sched_setscheduler(0, SCHED_FIFO, &scheduler)   // this tends to set errno to EPERM (insufficent privileges) but seems to help regardless
-    }
-
-    /// Set the priority of the current thread to the default.
-    ///
-    private static func setDefaultThreadPriority() {
-        var scheduler = sched_param()
-        scheduler.sched_priority = 0
-        _ = sched_setscheduler(0, SCHED_OTHER, &scheduler)
     }
 }
 
