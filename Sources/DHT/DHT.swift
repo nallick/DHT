@@ -11,12 +11,12 @@
 import Foundation
 import SwiftyGPIO
 
-public class DHT {
+open class DHT {
 
     public typealias Sample = (humidity: Int, temperature: Int)   // tenths of percent relative humidity, tenths of degrees celsius
     public typealias SampleResult = Result<Sample, SampleError>
 
-    public enum Device {
+    public enum Device: Int {
         case dht11, dht22
     }
 
