@@ -16,7 +16,7 @@ open class DHT {
     public typealias Sample = (humidity: Int, temperature: Int)   // tenths of percent relative humidity, tenths of degrees celsius
     public typealias SampleResult = Result<Sample, SampleError>
 
-    public enum Device: Int, Codable {
+    public enum Device: String, Codable {
         case dht11, dht22
     }
 
