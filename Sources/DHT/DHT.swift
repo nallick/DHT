@@ -5,7 +5,7 @@
 //
 //  Adapted from: https://github.com/adafruit/Adafruit_Python_DHT
 //
-//  Copyright © 2019 Purgatory Design. Licensed under the MIT License.
+//  Copyright © 2019, 2023 Purgatory Design. Licensed under the MIT License.
 //
 
 import Foundation
@@ -151,6 +151,7 @@ extension DHT {
 
     public typealias HumdityCallback = (DHT, Int) -> Void
     public typealias TemperatureCallback = (DHT, Double) -> Void
+    public typealias UpdateTimeCallback = (DHT, Date) -> Void
     public typealias SampleCallback = (DHT, SampleResult) -> Void
 
     public private(set) static var isRunning = false
@@ -169,9 +170,10 @@ extension DHT {
     /// - Parameter queueLabel: The DispatchQueue label.
     /// - Parameter humidity: The humidity change callback (this will be on the receiver's background activity thread).
     /// - Parameter temperature: The temperature change callback (this will be on the receiver's background activity thread).
+    /// - Parameter updateTime: The time of the last humidity or temperature change callback (this will be on the receiver's background activity thread).
     /// - Parameter sample: The sample callback for each read (this will be on the receiver's background activity thread).
     ///
-    public static func start(devices: [DHT], readInterval: TimeInterval, updateInterval: TimeInterval, queueLabel: String = "com.PurgatoryDesign.DHT", humidity: HumdityCallback? = nil, temperature: TemperatureCallback? = nil, sample: SampleCallback? = nil) {
+    public static func start(devices: [DHT], readInterval: TimeInterval, updateInterval: TimeInterval, queueLabel: String = "com.PurgatoryDesign.DHT", humidity: HumdityCallback? = nil, temperature: TemperatureCallback? = nil, updateTime: UpdateTimeCallback? = nil, sample: SampleCallback? = nil) {
         self.devices = devices
         self.readInterval = readInterval
         self.updateInterval = updateInterval
@@ -184,7 +186,7 @@ extension DHT {
 
         self.updateTimer = Timer.scheduledTimer(withTimeInterval: updateInterval, repeats: true) { _ in
             DHT.activityQueue?.async {
-                DHT.devices.forEach { $0.performUpdate(humidity: humidity, temperature: temperature) }
+                DHT.devices.forEach { $0.performUpdate(humidity: humidity, temperature: temperature, updateTime: updateTime) }
             }
         }
     }
@@ -226,18 +228,21 @@ extension DHT {
     ///
     /// - Parameter humidity: The humidity change callback (this will be on the receiver's background activity thread).
     /// - Parameter temperature: The temperature change callback (this will be on the receiver's background activity thread).
+    /// - Parameter updateTime: The time of the last humidity or temperature change callback (this will be on the receiver's background activity thread).
     ///
-    private func performUpdate(humidity: HumdityCallback?, temperature: TemperatureCallback?) {
+    private func performUpdate(humidity: HumdityCallback?, temperature: TemperatureCallback?, updateTime: UpdateTimeCallback?) {
         let now = Date()
         self.samples = self.samples.filter { now.timeIntervalSince($0.0) <= DHT.updateInterval }
         guard !self.samples.isEmpty else { return }
         let sampleCount = Double(self.samples.count)
+        var updated = false
 
         let humiditySum = self.samples.reduce(0) { accumulator, value in accumulator + value.1.humidity }
         let averageHumidity = Int(round(Double(humiditySum)/(sampleCount*10.0)))
         if averageHumidity != self.humidity {
             self.humidity = averageHumidity
             humidity?(self, averageHumidity)
+            updated = true
         }
 
         let temperatureSum = self.samples.reduce(0) { accumulator, value in accumulator + value.1.temperature }
@@ -245,6 +250,11 @@ extension DHT {
         if averageTemperature != self.temperature {
             self.temperature = averageTemperature
             temperature?(self, averageTemperature)
+            updated = true
+        }
+
+        if updated {
+            updateTime?(self, now)
         }
     }
 }
