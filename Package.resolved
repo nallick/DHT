@@ -3,11 +3,11 @@
     "pins": [
       {
         "package": "SwiftyGPIO",
-        "repositoryURL": "https://github.com/uraimo/SwiftyGPIO.git",
+        "repositoryURL": "https://github.com/nallick/SwiftyGPIO.git",
         "state": {
           "branch": null,
-          "revision": "1754dc31e4d648c6999b3e664d8669d1a87c22eb",
-          "version": "1.3.9"
+          "revision": "501f05ae3faaba40ac35167acb9a32e8c20a0715",
+          "version": "1.5.0"
         }
       }
     ]

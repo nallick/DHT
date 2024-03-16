@@ -11,7 +11,7 @@ let package = Package(
             targets: ["DHT"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/uraimo/SwiftyGPIO.git", from: "1.1.0"),
+        .package(url: "https://github.com/nallick/SwiftyGPIO.git", from: "1.5.0"),
     ],
     targets: [
         .target(
