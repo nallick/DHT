@@ -5,7 +5,7 @@
 //
 //  Adapted from: https://github.com/adafruit/Adafruit_Python_DHT
 //
-//  Copyright © 2019, 2023 Purgatory Design. Licensed under the MIT License.
+//  Copyright © 2019, 2023-2024 Purgatory Design. Licensed under the MIT License.
 //
 
 import Foundation
@@ -21,7 +21,7 @@ open class DHT {
     }
 
     public enum SampleError: Error {
-        case timeout, checksum
+        case timeout, checksum, gpio
     }
 
     public let pin: GPIO
@@ -60,21 +60,21 @@ open class DHT {
             defer { DHT.setDefaultThreadPriority() }
 
             // set pin high for ~500 milliseconds
-            self.pin.direction = .OUT
-            self.pin.value = 1
+            try self.pin.setDirection(.OUT)
+            try self.pin.setValue(1)
             usleep(500_000)
 
             // set pin low for ~20 milliseconds
-            self.pin.value = 0
+            try self.pin.setValue(0)
             usleep(20_000)
 
             // prepare to read the pin
-            self.pin.direction = .IN
+            try self.pin.setDirection(.IN)
             usleep(1)
 
             // wait for DHT to pull pin low
             var waitForStartCount = 0
-            while self.pin.value != 0 {
+            while try self.pin.getValue() != 0 {
                 waitForStartCount += 1
                 guard waitForStartCount < timeoutLoopLimit else { return .failure(.timeout) }
             }
@@ -83,18 +83,20 @@ open class DHT {
             for index in 0 ..< pulseCount {
 
                 // count how long pin is low and store in lowPulseCounts[index]
-                while self.pin.value == 0 {
+                while try self.pin.getValue() == 0 {
                     lowPulseCount[index] += 1
                     guard lowPulseCount[index] < timeoutLoopLimit else { return .failure(.timeout) }
                 }
 
                 // count how long pin is high and store in highPulseCounts[index]
-                while self.pin.value != 0 {
+                while try self.pin.getValue() != 0 {
                     highPulseCount[index] += 1
                     guard highPulseCount[index] < timeoutLoopLimit else { return .failure(.timeout) }
                 }
             }
             //********* end time sensitive section *********//
+        } catch {
+            return .failure(.gpio)
         }
 
         // ignore the first reading because it's a constant 80 microsecond pulse
