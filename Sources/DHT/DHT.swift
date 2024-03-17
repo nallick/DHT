@@ -21,7 +21,7 @@ open class DHT {
     }
 
     public enum SampleError: Error {
-        case timeout, checksum, gpio
+        case timeout, checksum
     }
 
     public let pin: GPIO
@@ -33,6 +33,8 @@ open class DHT {
     private let timeoutLoopLimit: Int
     private var samples: [(Date, Sample)] = []
 
+    private enum PinState { case low, high }
+
     /// Initialize a DHT reader.
     ///
     /// - Parameter pin: The GPIO pin the device is attached to.
@@ -43,6 +45,20 @@ open class DHT {
         self.pin = pin
         self.device = device
         self.timeoutLoopLimit = timeoutLoopLimit
+    }
+
+    /// Ensure we can read from the device's GPIO pin without error.
+    ///
+    /// - Returns: Any error encountered when reading from the GPIO pin, or nil if the read is successful.
+    ///
+    public func preflight() -> Error? {
+        do {
+            try self.pin.setDirection(.IN)
+            _ = try self.pin.getValue()
+            return nil
+        } catch {
+            return error
+        }
     }
 
     /// Read from the device.
@@ -60,43 +76,33 @@ open class DHT {
             defer { DHT.setDefaultThreadPriority() }
 
             // set pin high for ~500 milliseconds
-            try self.pin.setDirection(.OUT)
-            try self.pin.setValue(1)
+            self.pin.direction = .OUT
+            self.pin.value = 1
             usleep(500_000)
 
             // set pin low for ~20 milliseconds
-            try self.pin.setValue(0)
+            self.pin.value = 0
             usleep(20_000)
 
             // prepare to read the pin
-            try self.pin.setDirection(.IN)
+            self.pin.direction = .IN
             usleep(1)
 
             // wait for DHT to pull pin low
-            var waitForStartCount = 0
-            while try self.pin.getValue() != 0 {
-                waitForStartCount += 1
-                guard waitForStartCount < timeoutLoopLimit else { return .failure(.timeout) }
-            }
+            guard let _ = self.waitForPinState(.low) else { return .failure(.timeout) }
 
             // record pulse widths for the expected result bits
             for index in 0 ..< pulseCount {
 
                 // count how long pin is low and store in lowPulseCounts[index]
-                while try self.pin.getValue() == 0 {
-                    lowPulseCount[index] += 1
-                    guard lowPulseCount[index] < timeoutLoopLimit else { return .failure(.timeout) }
-                }
+                guard let lowCount = self.waitForPinState(.high) else { return .failure(.timeout) }
+                lowPulseCount[index] = lowCount
 
                 // count how long pin is high and store in highPulseCounts[index]
-                while try self.pin.getValue() != 0 {
-                    highPulseCount[index] += 1
-                    guard highPulseCount[index] < timeoutLoopLimit else { return .failure(.timeout) }
-                }
+                guard let highCount = self.waitForPinState(.low) else { return .failure(.timeout) }
+                highPulseCount[index] = highCount
             }
             //********* end time sensitive section *********//
-        } catch {
-            return .failure(.gpio)
         }
 
         // ignore the first reading because it's a constant 80 microsecond pulse
@@ -128,24 +134,42 @@ open class DHT {
         return .success((humidity, temperature))
     }
 
+    /// Wait for our GPIO pin to acheive a specific state or timeout.
+    ///
+    /// - Parameter expectedState: The pin state to wait for.
+    /// 
+    /// - Returns: The number of times we performed a tight loop waiting for the state, or nil if we timed out with too many loop iterations.
+    ///
+    private func waitForPinState(_ expectedState: PinState) -> Int? {
+        let continueWaiting: (Int) -> Bool = (expectedState == .low) ? { $0 != 0 } : { $0 == 0 }
+
+        var loopCount = 0
+        while continueWaiting(self.pin.value) {
+            loopCount += 1
+            guard loopCount < self.timeoutLoopLimit else { return nil }
+        }
+
+        return loopCount
+    }
+
     /// Set the priority of the current thread to maximum with FIFO scheduling to get as close to real time computing behavior as possible.
     ///
     private static func setMaximumThreadPriority() {
-        #if os(Linux)
+#if os(Linux)
         var scheduler = sched_param()
         scheduler.sched_priority = sched_get_priority_max(SCHED_FIFO)
         _ = sched_setscheduler(0, SCHED_FIFO, &scheduler)   // this tends to set errno to EPERM (insufficent privileges) but seems to help regardless
-        #endif
+#endif
     }
 
     /// Set the priority of the current thread to the default.
     ///
     private static func setDefaultThreadPriority() {
-        #if os(Linux)
+#if os(Linux)
         var scheduler = sched_param()
         scheduler.sched_priority = 0
         _ = sched_setscheduler(0, SCHED_OTHER, &scheduler)
-        #endif
+#endif
     }
 }
 
