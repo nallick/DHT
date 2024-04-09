@@ -31,7 +31,7 @@ open class DHT {
     public private(set) var temperature = Double.nan    // degrees celsius (accurate to 2.0°C or 0.5°C)
 
     private let timeoutLoopLimit: Int
-    private var samples: [(Date, Sample)] = []
+    private var samples: [Sample] = []
 
     private enum PinState { case low, high }
 
@@ -184,36 +184,29 @@ extension DHT {
 
     private static var devices: [DHT] = []
     private static var activityQueue: DispatchQueue?
-    private static var updateTimer: Timer?
     private static var readInterval: TimeInterval = 0.0
-    private static var updateInterval: TimeInterval = 0.0
+    private static var updateSampleCount: Int = 0
 
     /// Start sampling a list of devices periodically.
     ///
     /// - Parameter devices: The devices to sample.
     /// - Parameter readInterval: The time between reads (this should be at least 1.0 for a DHT11 and 2.0 for a DHT22).
-    /// - Parameter updateInterval: The minimum time between updates (if nothing changes updates will be less frequent).
+    /// - Parameter updateSampleCount: The minimum number of good samples required for an update.
     /// - Parameter queueLabel: The DispatchQueue label.
     /// - Parameter humidity: The humidity change callback (this will be on the receiver's background activity thread).
     /// - Parameter temperature: The temperature change callback (this will be on the receiver's background activity thread).
     /// - Parameter updated: The humidity or temperature change callback (this will be on the receiver's background activity thread).
     /// - Parameter sample: The sample callback for each read (this will be on the receiver's background activity thread).
     ///
-    public static func start(devices: [DHT], readInterval: TimeInterval, updateInterval: TimeInterval, queueLabel: String = "com.PurgatoryDesign.DHT", humidity: HumdityCallback? = nil, temperature: TemperatureCallback? = nil, updated: UpdatedCallback? = nil, sample: SampleCallback? = nil) {
+    public static func start(devices: [DHT], readInterval: TimeInterval, updateSampleCount: Int, queueLabel: String = "com.PurgatoryDesign.DHT", humidity: HumdityCallback? = nil, temperature: TemperatureCallback? = nil, updated: UpdatedCallback? = nil, sample: SampleCallback? = nil) {
         self.devices = devices
         self.readInterval = readInterval
-        self.updateInterval = updateInterval
+        self.updateSampleCount = updateSampleCount
         self.isRunning = true
 
         self.activityQueue = DispatchQueue(label: queueLabel)
         self.activityQueue?.async {
-            self.devices.forEach { $0.performRead(sample: sample) }
-        }
-
-        self.updateTimer = Timer.scheduledTimer(withTimeInterval: updateInterval, repeats: true) { _ in
-            DHT.activityQueue?.async {
-                DHT.devices.forEach { $0.performUpdate(humidity: humidity, temperature: temperature, updated: updated) }
-            }
+            self.devices.forEach { $0.performRead(sample: sample, humidity: humidity, temperature: temperature, updated: updated) }
         }
     }
 
@@ -222,8 +215,6 @@ extension DHT {
     public static func stop() {
         self.activityQueue?.async {
             self.isRunning = false
-            self.updateTimer?.invalidate()
-            self.updateTimer = nil
             self.activityQueue = nil
 
             self.devices.forEach { $0.samples.removeAll() }
@@ -234,19 +225,26 @@ extension DHT {
     /// Perform an individual device read.
     ///
     /// - Parameter sample: The sample callback for each read (this will be on the receiver's background activity thread).
+    /// - Parameter humidity: The humidity change callback (this will be on the receiver's background activity thread).
+    /// - Parameter temperature: The temperature change callback (this will be on the receiver's background activity thread).
+    /// - Parameter updated: The humidity or temperature change callback (this will be on the receiver's background activity thread).
     ///
-    private func performRead(sample: SampleCallback?) {
+    private func performRead(sample: SampleCallback?, humidity: HumdityCallback?, temperature: TemperatureCallback?, updated: UpdatedCallback?) {
         if DHT.isRunning {
             let result = self.sample()
             if case .success(let sample) = result {
-                self.samples.append((Date(), sample))
+                self.samples.append(sample)
             }
 
             DHT.activityQueue?.asyncAfter(deadline: .now() + DHT.readInterval) { [weak self] in
-                self?.performRead(sample: sample)
+                self?.performRead(sample: sample, humidity: humidity, temperature: temperature, updated: updated)
             }
 
             sample?(self, result)
+
+            if self.samples.count >= Self.updateSampleCount {
+                self.performUpdate(humidity: humidity, temperature: temperature, updated: updated)
+            }
         }
     }
 
@@ -257,13 +255,15 @@ extension DHT {
     /// - Parameter updated: The humidity or temperature change callback (this will be on the receiver's background activity thread).
     ///
     private func performUpdate(humidity: HumdityCallback?, temperature: TemperatureCallback?, updated: UpdatedCallback?) {
-        let now = Date()
-        self.samples = self.samples.filter { now.timeIntervalSince($0.0) <= DHT.updateInterval }
         guard !self.samples.isEmpty else { return }
-        let sampleCount = Double(self.samples.count)
-        var wasUpdated = false
 
-        let humiditySum = self.samples.reduce(0) { accumulator, value in accumulator + value.1.humidity }
+        let now = Date()
+        let sampleCount = Double(self.samples.count)
+        let humiditySum = self.samples.reduce(0) { accumulator, value in accumulator + value.humidity }
+        let temperatureSum = self.samples.reduce(0) { accumulator, value in accumulator + value.temperature }
+        self.samples.removeAll()
+
+        var wasUpdated = false
         let averageHumidity = Int(round(Double(humiditySum)/(sampleCount*10.0)))
         if averageHumidity != self.humidity {
             self.humidity = averageHumidity
@@ -271,7 +271,6 @@ extension DHT {
             wasUpdated = true
         }
 
-        let temperatureSum = self.samples.reduce(0) { accumulator, value in accumulator + value.1.temperature }
         let averageTemperature = round(Double(temperatureSum)/sampleCount)/10.0
         if averageTemperature != self.temperature {
             self.temperature = averageTemperature
